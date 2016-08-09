@@ -110,13 +110,29 @@ def timedelta_total_seconds(delta):
 
 
 class _StrKeyDict(MutableMapping):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, decode_responses=False, **kwargs):
+        self._decode_responses = decode_responses
         self._dict = dict(*args, **kwargs)
         self._ex_keys = {}
 
     def __getitem__(self, key):
         self._update_expired_keys()
-        return self._dict[to_bytes(key)]
+        value = self._dict[to_bytes(key)]
+        if self._decode_responses:
+            value = self._decode(value)
+        return value
+
+    def _decode(self, value):
+        if isinstance(value, bytes):
+            value = value.decode()
+        elif isinstance(value, (list, set)):
+            value = value.__class__(x.decode() if isinstance(x, bytes) else x 
+                                    for x in value)
+        elif isinstance(value, _StrKeyDict):
+            value = {k.decode() if isinstance(k, bytes) else k:
+                     v.decode() if isinstance(v, bytes) else v
+                     for k, v in value.items()}
+        return value
 
     def __setitem__(self, key, value):
         self._dict[to_bytes(key)] = value
@@ -182,9 +198,9 @@ class FakeStrictRedis(object):
                 db = 0
         return cls(db=db)
 
-    def __init__(self, db=0, charset='utf-8', errors='strict', **kwargs):
+    def __init__(self, db=0, charset='utf-8', errors='strict', decode_responses=False, **kwargs):
         if db not in DATABASES:
-            DATABASES[db] = _StrKeyDict()
+            DATABASES[db] = _StrKeyDict(decode_responses=decode_responses)
         self._db = DATABASES[db]
         self._db_num = db
         self._encoding = charset
@@ -274,8 +290,7 @@ class FakeStrictRedis(object):
         if isinstance(value, _StrKeyDict):
             raise redis.ResponseError("WRONGTYPE Operation against a key "
                                       "holding the wrong kind of value")
-        if value is not None:
-            return to_bytes(value)
+        return value
 
     def __getitem__(self, name):
         return self._db[name]
